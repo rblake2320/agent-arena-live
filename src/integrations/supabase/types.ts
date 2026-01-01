@@ -14,16 +14,394 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      agents: {
+        Row: {
+          api_endpoint: string | null
+          avatar_url: string | null
+          capabilities: string[] | null
+          created_at: string
+          description: string | null
+          elo_rating: number | null
+          id: string
+          is_public: boolean | null
+          matches_played: number | null
+          name: string
+          owner_id: string
+          provider: string
+          updated_at: string
+          wins: number | null
+        }
+        Insert: {
+          api_endpoint?: string | null
+          avatar_url?: string | null
+          capabilities?: string[] | null
+          created_at?: string
+          description?: string | null
+          elo_rating?: number | null
+          id?: string
+          is_public?: boolean | null
+          matches_played?: number | null
+          name: string
+          owner_id: string
+          provider: string
+          updated_at?: string
+          wins?: number | null
+        }
+        Update: {
+          api_endpoint?: string | null
+          avatar_url?: string | null
+          capabilities?: string[] | null
+          created_at?: string
+          description?: string | null
+          elo_rating?: number | null
+          id?: string
+          is_public?: boolean | null
+          matches_played?: number | null
+          name?: string
+          owner_id?: string
+          provider?: string
+          updated_at?: string
+          wins?: number | null
+        }
+        Relationships: []
+      }
+      match_messages: {
+        Row: {
+          agent_id: string | null
+          content: string
+          created_at: string
+          id: string
+          match_id: string
+          message_type: string | null
+          metadata: Json | null
+          round: number
+          team_id: string | null
+        }
+        Insert: {
+          agent_id?: string | null
+          content: string
+          created_at?: string
+          id?: string
+          match_id: string
+          message_type?: string | null
+          metadata?: Json | null
+          round: number
+          team_id?: string | null
+        }
+        Update: {
+          agent_id?: string | null
+          content?: string
+          created_at?: string
+          id?: string
+          match_id?: string
+          message_type?: string | null
+          metadata?: Json | null
+          round?: number
+          team_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "match_messages_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "agents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "match_messages_match_id_fkey"
+            columns: ["match_id"]
+            isOneToOne: false
+            referencedRelation: "matches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "match_messages_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      match_votes: {
+        Row: {
+          created_at: string
+          id: string
+          match_id: string
+          round: number | null
+          score: number | null
+          team_id: string
+          voter_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          match_id: string
+          round?: number | null
+          score?: number | null
+          team_id: string
+          voter_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          match_id?: string
+          round?: number | null
+          score?: number | null
+          team_id?: string
+          voter_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "match_votes_match_id_fkey"
+            columns: ["match_id"]
+            isOneToOne: false
+            referencedRelation: "matches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "match_votes_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      matches: {
+        Row: {
+          challenger_score: number | null
+          challenger_team_id: string | null
+          created_at: string
+          current_round: number | null
+          defender_score: number | null
+          defender_team_id: string | null
+          ended_at: string | null
+          id: string
+          match_type: string
+          started_at: string | null
+          status: Database["public"]["Enums"]["match_status"]
+          topic: string | null
+          total_rounds: number | null
+          updated_at: string
+          viewer_count: number | null
+          winner_team_id: string | null
+        }
+        Insert: {
+          challenger_score?: number | null
+          challenger_team_id?: string | null
+          created_at?: string
+          current_round?: number | null
+          defender_score?: number | null
+          defender_team_id?: string | null
+          ended_at?: string | null
+          id?: string
+          match_type?: string
+          started_at?: string | null
+          status?: Database["public"]["Enums"]["match_status"]
+          topic?: string | null
+          total_rounds?: number | null
+          updated_at?: string
+          viewer_count?: number | null
+          winner_team_id?: string | null
+        }
+        Update: {
+          challenger_score?: number | null
+          challenger_team_id?: string | null
+          created_at?: string
+          current_round?: number | null
+          defender_score?: number | null
+          defender_team_id?: string | null
+          ended_at?: string | null
+          id?: string
+          match_type?: string
+          started_at?: string | null
+          status?: Database["public"]["Enums"]["match_status"]
+          topic?: string | null
+          total_rounds?: number | null
+          updated_at?: string
+          viewer_count?: number | null
+          winner_team_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "matches_challenger_team_id_fkey"
+            columns: ["challenger_team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "matches_defender_team_id_fkey"
+            columns: ["defender_team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "matches_winner_team_id_fkey"
+            columns: ["winner_team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profiles: {
+        Row: {
+          avatar_url: string | null
+          bio: string | null
+          created_at: string
+          display_name: string | null
+          id: string
+          updated_at: string
+          user_id: string
+          username: string | null
+        }
+        Insert: {
+          avatar_url?: string | null
+          bio?: string | null
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          updated_at?: string
+          user_id: string
+          username?: string | null
+        }
+        Update: {
+          avatar_url?: string | null
+          bio?: string | null
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          updated_at?: string
+          user_id?: string
+          username?: string | null
+        }
+        Relationships: []
+      }
+      team_members: {
+        Row: {
+          agent_id: string
+          created_at: string
+          id: string
+          position: number
+          role: Database["public"]["Enums"]["team_role"]
+          team_id: string
+        }
+        Insert: {
+          agent_id: string
+          created_at?: string
+          id?: string
+          position?: number
+          role?: Database["public"]["Enums"]["team_role"]
+          team_id: string
+        }
+        Update: {
+          agent_id?: string
+          created_at?: string
+          id?: string
+          position?: number
+          role?: Database["public"]["Enums"]["team_role"]
+          team_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "team_members_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "agents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "team_members_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      teams: {
+        Row: {
+          avatar_url: string | null
+          created_at: string
+          description: string | null
+          elo_rating: number | null
+          id: string
+          is_public: boolean | null
+          matches_played: number | null
+          name: string
+          owner_id: string
+          updated_at: string
+          wins: number | null
+        }
+        Insert: {
+          avatar_url?: string | null
+          created_at?: string
+          description?: string | null
+          elo_rating?: number | null
+          id?: string
+          is_public?: boolean | null
+          matches_played?: number | null
+          name: string
+          owner_id: string
+          updated_at?: string
+          wins?: number | null
+        }
+        Update: {
+          avatar_url?: string | null
+          created_at?: string
+          description?: string | null
+          elo_rating?: number | null
+          id?: string
+          is_public?: boolean | null
+          matches_played?: number | null
+          name?: string
+          owner_id?: string
+          updated_at?: string
+          wins?: number | null
+        }
+        Relationships: []
+      }
+      user_roles: {
+        Row: {
+          created_at: string
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "admin" | "moderator" | "user"
+      match_status: "pending" | "in_progress" | "completed" | "cancelled"
+      team_role: "lead" | "researcher" | "critic" | "creative" | "analyst"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +528,10 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["admin", "moderator", "user"],
+      match_status: ["pending", "in_progress", "completed", "cancelled"],
+      team_role: ["lead", "researcher", "critic", "creative", "analyst"],
+    },
   },
 } as const
