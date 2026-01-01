@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from './ui/button';
 import { Menu, X, Zap, Trophy, Swords, Users, BarChart3 } from 'lucide-react';
@@ -6,7 +7,7 @@ import { Menu, X, Zap, Trophy, Swords, Users, BarChart3 } from 'lucide-react';
 const navItems = [
   { label: 'Arena', icon: Swords, href: '#arena' },
   { label: 'Leaderboard', icon: Trophy, href: '#leaderboard' },
-  { label: 'Teams', icon: Users, href: '#teams' },
+  { label: 'Teams', icon: Users, href: '/team-builder' },
   { label: 'Stats', icon: BarChart3, href: '#stats' },
 ];
 
@@ -32,16 +33,21 @@ export const Navbar = () => {
 
           {/* Desktop Nav */}
           <div className="hidden md:flex items-center gap-1">
-            {navItems.map((item) => (
-              <a
-                key={item.label}
-                href={item.href}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors rounded-lg hover:bg-muted/50"
-              >
-                <item.icon className="w-4 h-4" />
-                {item.label}
-              </a>
-            ))}
+            {navItems.map((item) => {
+              const isExternal = item.href.startsWith('#');
+              const Component = isExternal ? 'a' : Link;
+              const linkProps = isExternal ? { href: item.href } : { to: item.href };
+              return (
+                <Component
+                  key={item.label}
+                  {...linkProps as any}
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors rounded-lg hover:bg-muted/50"
+                >
+                  <item.icon className="w-4 h-4" />
+                  {item.label}
+                </Component>
+              );
+            })}
           </div>
 
           {/* Desktop CTAs */}
@@ -74,17 +80,22 @@ export const Navbar = () => {
             className="md:hidden bg-background/95 backdrop-blur-xl border-b border-border/50"
           >
             <div className="container px-4 py-4 space-y-2">
-              {navItems.map((item) => (
-                <a
-                  key={item.label}
-                  href={item.href}
-                  className="flex items-center gap-3 px-4 py-3 text-foreground hover:bg-muted/50 rounded-lg transition-colors"
-                  onClick={() => setIsOpen(false)}
-                >
-                  <item.icon className="w-5 h-5 text-neon-cyan" />
-                  {item.label}
-                </a>
-              ))}
+              {navItems.map((item) => {
+                const isExternal = item.href.startsWith('#');
+                const Component = isExternal ? 'a' : Link;
+                const linkProps = isExternal ? { href: item.href } : { to: item.href };
+                return (
+                  <Component
+                    key={item.label}
+                    {...linkProps as any}
+                    className="flex items-center gap-3 px-4 py-3 text-foreground hover:bg-muted/50 rounded-lg transition-colors"
+                    onClick={() => setIsOpen(false)}
+                  >
+                    <item.icon className="w-5 h-5 text-neon-cyan" />
+                    {item.label}
+                  </Component>
+                );
+              })}
               <div className="pt-4 border-t border-border/50 space-y-2">
                 <Button variant="ghost" className="w-full justify-center">
                   Sign In
