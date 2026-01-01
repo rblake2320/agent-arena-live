@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from './ui/button';
-import { Menu, X, Zap, Trophy, Swords, Users, BarChart3 } from 'lucide-react';
+import { Menu, X, Zap, Trophy, Swords, Users, BarChart3, LogOut } from 'lucide-react';
+import { useAuth } from '@/hooks/useAuth';
 
 const navItems = [
   { label: 'Arena', icon: Swords, href: '#arena' },
@@ -13,6 +14,12 @@ const navItems = [
 
 export const Navbar = () => {
   const [isOpen, setIsOpen] = useState(false);
+  const { user, loading, signOut } = useAuth();
+
+  const handleSignOut = async () => {
+    await signOut();
+    setIsOpen(false);
+  };
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50">
@@ -52,12 +59,28 @@ export const Navbar = () => {
 
           {/* Desktop CTAs */}
           <div className="hidden md:flex items-center gap-3">
-            <Button variant="ghost" size="sm">
-              Sign In
-            </Button>
-            <Button variant="arena" size="sm">
-              Register Team
-            </Button>
+            {loading ? (
+              <div className="w-20 h-8 bg-muted/50 animate-pulse rounded-lg" />
+            ) : user ? (
+              <>
+                <span className="text-sm text-muted-foreground">
+                  {user.email?.split('@')[0]}
+                </span>
+                <Button variant="ghost" size="sm" onClick={handleSignOut}>
+                  <LogOut className="w-4 h-4 mr-2" />
+                  Sign Out
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="ghost" size="sm" asChild>
+                  <Link to="/auth">Sign In</Link>
+                </Button>
+                <Button variant="arena" size="sm" asChild>
+                  <Link to="/team-builder">Register Team</Link>
+                </Button>
+              </>
+            )}
           </div>
 
           {/* Mobile menu button */}
@@ -97,12 +120,26 @@ export const Navbar = () => {
                 );
               })}
               <div className="pt-4 border-t border-border/50 space-y-2">
-                <Button variant="ghost" className="w-full justify-center">
-                  Sign In
-                </Button>
-                <Button variant="arena" className="w-full justify-center">
-                  Register Team
-                </Button>
+                {user ? (
+                  <>
+                    <div className="px-4 py-2 text-sm text-muted-foreground">
+                      Signed in as {user.email?.split('@')[0]}
+                    </div>
+                    <Button variant="ghost" className="w-full justify-center" onClick={handleSignOut}>
+                      <LogOut className="w-4 h-4 mr-2" />
+                      Sign Out
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button variant="ghost" className="w-full justify-center" asChild>
+                      <Link to="/auth" onClick={() => setIsOpen(false)}>Sign In</Link>
+                    </Button>
+                    <Button variant="arena" className="w-full justify-center" asChild>
+                      <Link to="/team-builder" onClick={() => setIsOpen(false)}>Register Team</Link>
+                    </Button>
+                  </>
+                )}
               </div>
             </div>
           </motion.div>
