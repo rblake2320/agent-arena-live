@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useNavigate, useParams, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Link } from 'react-router-dom';
 import { 
   ArrowLeft, 
   Plus, 
@@ -14,7 +14,9 @@ import {
   Upload,
   Save,
   Users,
-  Zap
+  Zap,
+  Loader2,
+  LogIn
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -33,6 +35,10 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
+import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/hooks/useAuth';
+import { useTeams, TeamMember } from '@/hooks/useTeams';
+import { useAgents, Agent } from '@/hooks/useAgents';
 
 const roles = [
   { id: 'lead', label: 'Lead', icon: Crown, color: 'text-yellow-400', description: 'Primary strategist and decision maker' },
@@ -42,56 +48,229 @@ const roles = [
   { id: 'analyst', label: 'Analyst', icon: Brain, color: 'text-green-400', description: 'Processes and synthesizes information' },
 ];
 
-const mockAgents = [
-  { id: '1', name: 'GPT-4 Turbo', provider: 'OpenAI', capabilities: ['debate', 'code', 'creative'] },
-  { id: '2', name: 'Claude 3 Opus', provider: 'Anthropic', capabilities: ['debate', 'analysis'] },
-  { id: '3', name: 'Gemini Pro', provider: 'Google', capabilities: ['code', 'creative'] },
-  { id: '4', name: 'Mistral Large', provider: 'Mistral', capabilities: ['debate', 'code'] },
-  { id: '5', name: 'LLaMA 3', provider: 'Meta', capabilities: ['analysis', 'creative'] },
-];
-
-interface TeamAgent {
+interface LocalTeamAgent {
   id: string;
+  agentId: string;
   name: string;
   provider: string;
-  role: string;
+  role: TeamMember['role'];
   capabilities: string[];
+  position: number;
 }
 
 export default function TeamBuilder() {
+  const { teamId } = useParams();
+  const navigate = useNavigate();
+  const { toast } = useToast();
+  const { user, loading: authLoading } = useAuth();
+  const { teams, loading: teamsLoading, createTeam, updateTeam, addAgentToTeam, removeAgentFromTeam, updateTeamMember } = useTeams();
+  const { allAvailableAgents, loading: agentsLoading } = useAgents();
+
   const [teamName, setTeamName] = useState('');
   const [teamDescription, setTeamDescription] = useState('');
-  const [teamAgents, setTeamAgents] = useState<TeamAgent[]>([]);
+  const [teamAgents, setTeamAgents] = useState<LocalTeamAgent[]>([]);
   const [agentDialogOpen, setAgentDialogOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [currentTeamId, setCurrentTeamId] = useState<string | null>(null);
 
-  const filteredAgents = mockAgents.filter(agent => 
+  // Load existing team if editing
+  useEffect(() => {
+    if (teamId && teams.length > 0) {
+      const existingTeam = teams.find(t => t.id === teamId);
+      if (existingTeam) {
+        setCurrentTeamId(existingTeam.id);
+        setTeamName(existingTeam.name);
+        setTeamDescription(existingTeam.description || '');
+        
+        // Load team members
+        const members = existingTeam.members || [];
+        setTeamAgents(members.map(m => ({
+          id: m.id,
+          agentId: m.agent_id,
+          name: m.agent?.name || 'Unknown Agent',
+          provider: m.agent?.provider || 'Unknown',
+          role: m.role,
+          capabilities: m.agent?.capabilities || [],
+          position: m.position,
+        })));
+      }
+    }
+  }, [teamId, teams]);
+
+  const filteredAgents = allAvailableAgents.filter(agent => 
     agent.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     agent.provider.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const addAgent = (agent: typeof mockAgents[0]) => {
+  const addAgent = (agent: Agent) => {
     if (teamAgents.length >= 5) return;
-    if (teamAgents.find(a => a.id === agent.id)) return;
+    if (teamAgents.find(a => a.agentId === agent.id)) return;
     
-    setTeamAgents([...teamAgents, { ...agent, role: 'researcher' }]);
+    const newAgent: LocalTeamAgent = {
+      id: `temp-${Date.now()}`,
+      agentId: agent.id,
+      name: agent.name,
+      provider: agent.provider,
+      role: 'researcher',
+      capabilities: agent.capabilities,
+      position: teamAgents.length,
+    };
+    
+    setTeamAgents([...teamAgents, newAgent]);
     setAgentDialogOpen(false);
     setSearchQuery('');
   };
 
   const removeAgent = (agentId: string) => {
-    setTeamAgents(teamAgents.filter(a => a.id !== agentId));
+    setTeamAgents(teamAgents.filter(a => a.agentId !== agentId));
   };
 
   const updateAgentRole = (agentId: string, role: string) => {
     setTeamAgents(teamAgents.map(a => 
-      a.id === agentId ? { ...a, role } : a
+      a.agentId === agentId ? { ...a, role: role as TeamMember['role'] } : a
     ));
   };
 
   const getRoleInfo = (roleId: string) => {
     return roles.find(r => r.id === roleId) || roles[1];
   };
+
+  const handleSave = async () => {
+    if (!user) {
+      navigate('/auth');
+      return;
+    }
+
+    if (!teamName.trim()) {
+      toast({
+        title: "Team name required",
+        description: "Please enter a name for your team.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      let savedTeamId = currentTeamId;
+
+      // Create or update team
+      if (!savedTeamId) {
+        const newTeam = await createTeam(teamName.trim(), teamDescription.trim() || undefined);
+        if (!newTeam) {
+          setSaving(false);
+          return;
+        }
+        savedTeamId = newTeam.id;
+        setCurrentTeamId(savedTeamId);
+      } else {
+        const updated = await updateTeam(savedTeamId, {
+          name: teamName.trim(),
+          description: teamDescription.trim() || undefined,
+        });
+        if (!updated) {
+          setSaving(false);
+          return;
+        }
+      }
+
+      // Get existing team to compare members
+      const existingTeam = teams.find(t => t.id === savedTeamId);
+      const existingMembers = existingTeam?.members || [];
+
+      // Remove agents that are no longer in the team
+      for (const member of existingMembers) {
+        if (!teamAgents.find(a => a.agentId === member.agent_id)) {
+          await removeAgentFromTeam(savedTeamId, member.agent_id);
+        }
+      }
+
+      // Add or update agents
+      for (const agent of teamAgents) {
+        const existing = existingMembers.find(m => m.agent_id === agent.agentId);
+        if (existing) {
+          // Update if role or position changed
+          if (existing.role !== agent.role || existing.position !== agent.position) {
+            await updateTeamMember(savedTeamId, agent.agentId, {
+              role: agent.role,
+              position: agent.position,
+            });
+          }
+        } else {
+          // Add new member
+          await addAgentToTeam(savedTeamId, agent.agentId, agent.role, agent.position);
+        }
+      }
+
+      toast({
+        title: "Team saved!",
+        description: "Your team has been saved successfully.",
+      });
+
+      // Navigate to the team's URL if this was a new team
+      if (!teamId && savedTeamId) {
+        navigate(`/team-builder/${savedTeamId}`, { replace: true });
+      }
+    } catch (error) {
+      console.error('Error saving team:', error);
+      toast({
+        title: "Error saving team",
+        description: "Something went wrong. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Loading state
+  if (authLoading || teamsLoading || agentsLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-neon-cyan" />
+      </div>
+    );
+  }
+
+  // Not authenticated
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-background">
+        <div className="fixed inset-0 bg-grid-pattern opacity-5 pointer-events-none" />
+        <div className="fixed inset-0 bg-gradient-to-br from-neon-cyan/5 via-transparent to-neon-purple/5 pointer-events-none" />
+        
+        <div className="container px-4 py-16 flex flex-col items-center justify-center min-h-screen">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="arena-card p-8 max-w-md text-center"
+          >
+            <Users className="w-16 h-16 text-neon-cyan mx-auto mb-4" />
+            <h1 className="font-display font-bold text-2xl mb-2">Sign In Required</h1>
+            <p className="text-muted-foreground mb-6">
+              You need to sign in to create and manage teams.
+            </p>
+            <div className="flex gap-4 justify-center">
+              <Button variant="outline" asChild>
+                <Link to="/">
+                  <ArrowLeft className="w-4 h-4 mr-2" />
+                  Back
+                </Link>
+              </Button>
+              <Button variant="arena" asChild>
+                <Link to="/auth">
+                  <LogIn className="w-4 h-4 mr-2" />
+                  Sign In
+                </Link>
+              </Button>
+            </div>
+          </motion.div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -108,12 +287,24 @@ export default function TeamBuilder() {
             </Link>
             <div className="flex items-center gap-2">
               <Users className="w-5 h-5 text-neon-cyan" />
-              <h1 className="font-display font-bold text-lg">Team Builder</h1>
+              <h1 className="font-display font-bold text-lg">
+                {currentTeamId ? 'Edit Team' : 'Create Team'}
+              </h1>
             </div>
           </div>
-          <Button variant="arena" size="sm" className="gap-2">
-            <Save className="w-4 h-4" />
-            Save Team
+          <Button 
+            variant="arena" 
+            size="sm" 
+            className="gap-2"
+            onClick={handleSave}
+            disabled={saving}
+          >
+            {saving ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Save className="w-4 h-4" />
+            )}
+            {saving ? 'Saving...' : 'Save Team'}
           </Button>
         </div>
       </header>
@@ -181,6 +372,19 @@ export default function TeamBuilder() {
                 </div>
               </div>
             </div>
+
+            {/* No agents message */}
+            {allAvailableAgents.length === 0 && (
+              <div className="arena-card p-6 text-center">
+                <Zap className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+                <p className="text-sm text-muted-foreground mb-3">
+                  No agents available yet. Register your first agent to add it to your team.
+                </p>
+                <Button variant="outline" size="sm" asChild>
+                  <Link to="/register-agent">Register Agent</Link>
+                </Button>
+              </div>
+            )}
           </motion.div>
 
           {/* Agent Slots Section */}
@@ -198,7 +402,7 @@ export default function TeamBuilder() {
                   <Button 
                     variant="neon" 
                     size="sm" 
-                    disabled={teamAgents.length >= 5}
+                    disabled={teamAgents.length >= 5 || allAvailableAgents.length === 0}
                     className="gap-2"
                   >
                     <Plus className="w-4 h-4" />
@@ -217,29 +421,35 @@ export default function TeamBuilder() {
                       className="bg-muted/30"
                     />
                     <div className="max-h-64 overflow-y-auto space-y-2">
-                      {filteredAgents.map(agent => {
-                        const isAdded = teamAgents.find(a => a.id === agent.id);
-                        return (
-                          <button
-                            key={agent.id}
-                            onClick={() => addAgent(agent)}
-                            disabled={!!isAdded}
-                            className="w-full p-3 rounded-lg bg-muted/30 hover:bg-muted/50 disabled:opacity-50 disabled:cursor-not-allowed text-left transition-colors flex items-center justify-between"
-                          >
-                            <div>
-                              <div className="font-medium">{agent.name}</div>
-                              <div className="text-sm text-muted-foreground">{agent.provider}</div>
-                            </div>
-                            <div className="flex gap-1">
-                              {agent.capabilities.slice(0, 2).map(cap => (
-                                <span key={cap} className="text-xs px-2 py-0.5 bg-neon-cyan/10 text-neon-cyan rounded">
-                                  {cap}
-                                </span>
-                              ))}
-                            </div>
-                          </button>
-                        );
-                      })}
+                      {filteredAgents.length === 0 ? (
+                        <p className="text-sm text-muted-foreground text-center py-4">
+                          No agents found. Register some agents first.
+                        </p>
+                      ) : (
+                        filteredAgents.map(agent => {
+                          const isAdded = teamAgents.find(a => a.agentId === agent.id);
+                          return (
+                            <button
+                              key={agent.id}
+                              onClick={() => addAgent(agent)}
+                              disabled={!!isAdded}
+                              className="w-full p-3 rounded-lg bg-muted/30 hover:bg-muted/50 disabled:opacity-50 disabled:cursor-not-allowed text-left transition-colors flex items-center justify-between"
+                            >
+                              <div>
+                                <div className="font-medium">{agent.name}</div>
+                                <div className="text-sm text-muted-foreground">{agent.provider}</div>
+                              </div>
+                              <div className="flex gap-1">
+                                {agent.capabilities.slice(0, 2).map(cap => (
+                                  <span key={cap} className="text-xs px-2 py-0.5 bg-neon-cyan/10 text-neon-cyan rounded">
+                                    {cap}
+                                  </span>
+                                ))}
+                              </div>
+                            </button>
+                          );
+                        })
+                      )}
                     </div>
                   </div>
                 </DialogContent>
@@ -254,7 +464,7 @@ export default function TeamBuilder() {
                   const RoleIcon = roleInfo.icon;
                   return (
                     <motion.div
-                      key={agent.id}
+                      key={agent.agentId}
                       layout
                       initial={{ opacity: 0, scale: 0.9 }}
                       animate={{ opacity: 1, scale: 1 }}
@@ -280,7 +490,7 @@ export default function TeamBuilder() {
                           <div className="flex items-center gap-3">
                             <Select
                               value={agent.role}
-                              onValueChange={(value) => updateAgentRole(agent.id, value)}
+                              onValueChange={(value) => updateAgentRole(agent.agentId, value)}
                             >
                               <SelectTrigger className="w-40 h-8 text-sm bg-muted/30 border-border/50">
                                 <div className="flex items-center gap-2">
@@ -310,7 +520,7 @@ export default function TeamBuilder() {
 
                         {/* Remove Button */}
                         <button
-                          onClick={() => removeAgent(agent.id)}
+                          onClick={() => removeAgent(agent.agentId)}
                           className="p-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
                         >
                           <X className="w-4 h-4" />
@@ -329,7 +539,7 @@ export default function TeamBuilder() {
                   animate={{ opacity: 1 }}
                   transition={{ delay: index * 0.05 }}
                   className="border-2 border-dashed border-border/50 rounded-xl p-6 flex items-center justify-center hover:border-neon-cyan/30 transition-colors cursor-pointer"
-                  onClick={() => setAgentDialogOpen(true)}
+                  onClick={() => allAvailableAgents.length > 0 && setAgentDialogOpen(true)}
                 >
                   <div className="text-center text-muted-foreground">
                     <Plus className="w-8 h-8 mx-auto mb-2 opacity-50" />
