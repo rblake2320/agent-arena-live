@@ -1,6 +1,17 @@
 import { Request, Response, NextFunction } from 'express';
 import { logger } from '../utils/logger.js';
 
+const SENSITIVE_FIELDS = ['password', 'currentPassword', 'newPassword', 'passwordHash', 'token'];
+
+function redactSensitive(body: unknown): unknown {
+  if (!body || typeof body !== 'object') return body;
+  const clone: Record<string, unknown> = { ...(body as Record<string, unknown>) };
+  for (const field of SENSITIVE_FIELDS) {
+    if (field in clone) clone[field] = '[REDACTED]';
+  }
+  return clone;
+}
+
 // Custom error class
 export class AppError extends Error {
   statusCode: number;
@@ -24,11 +35,11 @@ export const errorHandler = (
 ): void => {
   let error = err;
 
-  // Log error
+  // Log error — never log credentials or tokens
   logger.error(`Error ${req.method} ${req.path}:`, {
     message: error.message,
     stack: error.stack,
-    body: req.body,
+    body: redactSensitive(req.body),
     params: req.params,
     query: req.query,
   });
@@ -83,10 +94,13 @@ export const notFoundHandler = (req: Request, res: Response, next: NextFunction)
   });
 };
 
-// Async error wrapper
-export const asyncHandler = (fn: Function) => {
+// Async error wrapper — generic over the request type so handlers using
+// AuthenticatedRequest keep full typing.
+export const asyncHandler = <R extends Request = Request>(
+  fn: (req: R, res: Response, next: NextFunction) => unknown
+) => {
   return (req: Request, res: Response, next: NextFunction) => {
-    Promise.resolve(fn(req, res, next)).catch(next);
+    Promise.resolve(fn(req as R, res, next)).catch(next);
   };
 };
 

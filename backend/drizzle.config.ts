@@ -3,12 +3,16 @@ import * as dotenv from 'dotenv';
 
 dotenv.config();
 
+if (!process.env.DATABASE_URL) {
+  throw new Error('DATABASE_URL is not set. Copy backend/.env.example to backend/.env and configure it.');
+}
+
 export default {
   schema: './src/db/schema.ts',
   out: './drizzle',
   driver: 'pg',
   dbCredentials: {
-    connectionString: process.env.DATABASE_URL || 'postgresql://postgres:password@localhost:5432/agent_arena_live',
+    connectionString: process.env.DATABASE_URL,
   },
   verbose: true,
   strict: true,

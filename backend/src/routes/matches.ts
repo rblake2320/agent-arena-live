@@ -14,6 +14,7 @@ import {
 import { asyncHandler, notFoundError, validationError } from '../middleware/error.js';
 import { logger } from '../utils/logger.js';
 import { broadcastMatchUpdate, broadcastNewMatch, broadcastBattleEvent } from '../services/websocket.js';
+import { authenticateToken, requireRole, AuthenticatedRequest } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -44,15 +45,18 @@ router.get('/', asyncHandler(async (req, res) => {
     })
     .from(matches)
     .leftJoin(matchTypes, eq(matches.matchTypeId, matchTypes.id))
-    .leftJoin(teams, eq(matches.winnerId, teams.id));
+    .leftJoin(teams, eq(matches.winnerId, teams.id)).$dynamic();
 
-  // Add filters
+  // Add filters (collect conditions — chained .where() calls replace each other)
+  const conditions = [];
   if (status) {
-    query = query.where(eq(matches.status, status));
+    conditions.push(eq(matches.status, status));
   }
-
   if (matchType) {
-    query = query.where(eq(matchTypes.name, matchType));
+    conditions.push(eq(matchTypes.name, matchType));
+  }
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions));
   }
 
   const allMatches = await query
@@ -239,8 +243,8 @@ router.get('/:id', asyncHandler(async (req, res) => {
   });
 }));
 
-// Create new match
-router.post('/', asyncHandler(async (req, res) => {
+// Create new match (any authenticated user)
+router.post('/', authenticateToken, asyncHandler(async (req: AuthenticatedRequest, res) => {
   const {
     topic,
     matchTypeId,
@@ -327,8 +331,8 @@ router.post('/', asyncHandler(async (req, res) => {
   }
 }));
 
-// Start a match
-router.post('/:id/start', asyncHandler(async (req, res) => {
+// Start a match (admin/moderator — official lifecycle control)
+router.post('/:id/start', authenticateToken, requireRole('admin', 'moderator'), asyncHandler(async (req, res) => {
   const matchId = parseInt(req.params.id);
 
   if (isNaN(matchId)) {
@@ -374,8 +378,8 @@ router.post('/:id/start', asyncHandler(async (req, res) => {
   });
 }));
 
-// End a match
-router.post('/:id/end', asyncHandler(async (req, res) => {
+// End a match (admin/moderator — official lifecycle control)
+router.post('/:id/end', authenticateToken, requireRole('admin', 'moderator'), asyncHandler(async (req, res) => {
   const matchId = parseInt(req.params.id);
   const { winnerId, finalScores } = req.body;
 
@@ -440,8 +444,8 @@ router.post('/:id/end', asyncHandler(async (req, res) => {
   });
 }));
 
-// Add battle event
-router.post('/:id/events', asyncHandler(async (req, res) => {
+// Add battle event (admin/moderator)
+router.post('/:id/events', authenticateToken, requireRole('admin', 'moderator'), asyncHandler(async (req, res) => {
   const matchId = parseInt(req.params.id);
   const { round, agentId, teamId, eventType, content, metadata } = req.body;
 

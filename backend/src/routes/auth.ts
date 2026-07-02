@@ -5,11 +5,13 @@ import jwt from 'jsonwebtoken';
 import { db, users } from '../db/index.js';
 import { asyncHandler, validationError, authError } from '../middleware/error.js';
 import { logger } from '../utils/logger.js';
+import { config } from '../config.js';
+import { authenticateToken } from '../middleware/auth.js';
 
 const router = Router();
 
-const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret-key';
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
+const JWT_SECRET = config.jwtSecret;
+const JWT_EXPIRES_IN = config.jwtExpiresIn;
 
 // Register new user
 router.post('/register', asyncHandler(async (req, res) => {
@@ -71,7 +73,7 @@ router.post('/register', asyncHandler(async (req, res) => {
         role: newUser.role,
       },
       JWT_SECRET,
-      { expiresIn: JWT_EXPIRES_IN }
+      { expiresIn: JWT_EXPIRES_IN } as jwt.SignOptions
     );
 
     res.status(201).json({
@@ -142,7 +144,7 @@ router.post('/login', asyncHandler(async (req, res) => {
       role: user[0].role,
     },
     JWT_SECRET,
-    { expiresIn: JWT_EXPIRES_IN }
+    { expiresIn: JWT_EXPIRES_IN } as jwt.SignOptions
   );
 
   logger.info(`User logged in: ${user[0].username} (ID: ${user[0].id})`);
@@ -323,7 +325,7 @@ router.post('/refresh', authenticateToken, asyncHandler(async (req, res) => {
       role: user[0].role,
     },
     JWT_SECRET,
-    { expiresIn: JWT_EXPIRES_IN }
+    { expiresIn: JWT_EXPIRES_IN } as jwt.SignOptions
   );
 
   res.json({
@@ -332,23 +334,7 @@ router.post('/refresh', authenticateToken, asyncHandler(async (req, res) => {
   });
 }));
 
-// Authentication middleware
-export function authenticateToken(req: any, res: any, next: any) {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
-
-  if (!token) {
-    return res.status(401).json({ error: true, message: 'Access token required' });
-  }
-
-  jwt.verify(token, JWT_SECRET, (err: any, user: any) => {
-    if (err) {
-      return res.status(403).json({ error: true, message: 'Invalid or expired token' });
-    }
-
-    req.user = user;
-    next();
-  });
-}
+// Re-exported so existing imports keep working; implementation lives in middleware/auth.ts
+export { authenticateToken };
 
 export default router;

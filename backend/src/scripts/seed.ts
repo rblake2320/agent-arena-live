@@ -1,8 +1,23 @@
+import { randomBytes } from 'crypto';
+import bcrypt from 'bcrypt';
+import { config } from '../config.js';
 import { db, agents, teams, teamAgents, matchTypes, users, matches, matchParticipants } from '../db/index.js';
 import { logger } from '../utils/logger.js';
 
 async function seedDatabase() {
+  // The seed WIPES all data — refuse to run against production by accident
+  if (config.isProduction && process.env.SEED_FORCE !== 'true') {
+    throw new Error('Refusing to seed in production (this deletes all data). Set SEED_FORCE=true to override.');
+  }
+
   logger.info('Starting database seed...');
+
+  // Demo account password: taken from SEED_PASSWORD, or generated per run.
+  const seedPassword = process.env.SEED_PASSWORD || randomBytes(12).toString('base64url');
+  const seedPasswordHash = await bcrypt.hash(seedPassword, 12);
+  if (!process.env.SEED_PASSWORD) {
+    logger.info(`Generated seed account password (all demo users): ${seedPassword}`);
+  }
 
   try {
     // Clear existing data (in reverse order due to foreign keys)
@@ -21,7 +36,7 @@ async function seedDatabase() {
       {
         username: 'craig_dev',
         email: 'craig@agentarena.com',
-        passwordHash: '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/lewfBMOM1N4dTLLZa', // password123
+        passwordHash: seedPasswordHash,
         displayName: 'Craig',
         isVerified: true,
         role: 'admin',
@@ -29,7 +44,7 @@ async function seedDatabase() {
       {
         username: 'quantum_ai',
         email: 'quantum@agentarena.com',
-        passwordHash: '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/lewfBMOM1N4dTLLZa',
+        passwordHash: seedPasswordHash,
         displayName: 'Quantum AI',
         isVerified: true,
         role: 'user',
@@ -37,7 +52,7 @@ async function seedDatabase() {
       {
         username: 'titan_labs',
         email: 'titan@agentarena.com',
-        passwordHash: '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/lewfBMOM1N4dTLLZa',
+        passwordHash: seedPasswordHash,
         displayName: 'Titan Labs',
         isVerified: true,
         role: 'user',
@@ -45,7 +60,7 @@ async function seedDatabase() {
       {
         username: 'beast_mode',
         email: 'beast@agentarena.com',
-        passwordHash: '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/lewfBMOM1N4dTLLZa',
+        passwordHash: seedPasswordHash,
         displayName: 'Beast Mode',
         isVerified: true,
         role: 'user',
@@ -53,7 +68,7 @@ async function seedDatabase() {
       {
         username: 'creative_ai',
         email: 'creative@agentarena.com',
-        passwordHash: '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/lewfBMOM1N4dTLLZa',
+        passwordHash: seedPasswordHash,
         displayName: 'Creative AI',
         isVerified: true,
         role: 'user',
@@ -456,17 +471,15 @@ async function seedDatabase() {
   }
 }
 
-// Run seed if called directly
-if (import.meta.url === `file://${process.argv[1]}`) {
-  seedDatabase()
-    .then(() => {
-      logger.info('Seed completed');
-      process.exit(0);
-    })
-    .catch((error) => {
-      logger.error('Seed failed:', error);
-      process.exit(1);
-    });
-}
+// This script is only ever executed directly (npm run db:seed) — run immediately.
+seedDatabase()
+  .then(() => {
+    logger.info('Seed completed');
+    process.exit(0);
+  })
+  .catch((error) => {
+    logger.error('Seed failed:', error);
+    process.exit(1);
+  });
 
 export { seedDatabase };

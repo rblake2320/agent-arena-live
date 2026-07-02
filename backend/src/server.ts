@@ -1,12 +1,16 @@
+// config must be imported first: it loads .env and validates required variables
+// before any other module reads process.env.
+import { config } from './config.js';
+
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import helmet from 'helmet';
-import dotenv from 'dotenv';
 import rateLimit from 'express-rate-limit';
+import { sql } from 'drizzle-orm';
 
-import { db } from './db/index.js';
+import { db, client } from './db/index.js';
 import { setupWebSocket } from './services/websocket.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 import { logger } from './utils/logger.js';
@@ -19,23 +23,23 @@ import leaderboardRoutes from './routes/leaderboard.js';
 import agentsRoutes from './routes/agents.js';
 import battleRoutes from './routes/battles.js';
 
-// Load environment variables
-dotenv.config();
-
 const app = express();
 const server = createServer(app);
 
 // Socket.IO setup with CORS
 const io = new Server(server, {
   cors: {
-    origin: process.env.CORS_ORIGIN?.split(',') || ['http://localhost:5173', 'http://localhost:3000'],
+    origin: config.corsOrigins,
     credentials: true,
   },
-  path: process.env.WS_PATH || '/socket.io',
+  path: config.wsPath,
 });
 
-const PORT = parseInt(process.env.PORT || '8000', 10);
-const HOST = process.env.HOST || 'localhost';
+// Running behind a reverse proxy (nginx, Cloudflare) in production —
+// needed so rate limiting sees real client IPs instead of the proxy's.
+if (config.isProduction) {
+  app.set('trust proxy', 1);
+}
 
 // Security middleware
 app.use(helmet({
@@ -56,7 +60,7 @@ app.use(helmet({
 
 // CORS configuration
 app.use(cors({
-  origin: process.env.CORS_ORIGIN?.split(',') || ['http://localhost:5173', 'http://localhost:3000'],
+  origin: config.corsOrigins,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
@@ -64,9 +68,18 @@ app.use(cors({
 
 // Rate limiting
 const limiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW || '15', 10) * 60 * 1000, // 15 minutes default
-  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100', 10), // limit each IP to 100 requests per windowMs
-  message: 'Too many requests from this IP, please try again later.',
+  windowMs: config.rateLimitWindowMinutes * 60 * 1000,
+  max: config.rateLimitMaxRequests,
+  message: { error: true, message: 'Too many requests from this IP, please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Stricter limit for credential endpoints to slow brute-force attempts
+const authLimiter = rateLimit({
+  windowMs: config.rateLimitWindowMinutes * 60 * 1000,
+  max: config.authRateLimitMaxRequests,
+  message: { error: true, message: 'Too many authentication attempts, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -74,21 +87,32 @@ const limiter = rateLimit({
 app.use(limiter);
 
 // Body parsing middleware
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
-// Health check endpoint
-app.get('/health', (req, res) => {
+// Liveness: process is up
+app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
     version: process.env.npm_package_version || '1.0.0',
-    environment: process.env.NODE_ENV || 'development'
+    environment: config.nodeEnv,
   });
 });
 
+// Readiness: process is up AND the database is reachable
+app.get('/ready', async (_req, res) => {
+  try {
+    await db.execute(sql`select 1`);
+    res.json({ status: 'ready' });
+  } catch (error) {
+    logger.error('Readiness check failed — database unreachable', { error: (error as Error).message });
+    res.status(503).json({ status: 'unavailable', reason: 'database unreachable' });
+  }
+});
+
 // API routes
-app.use('/api/auth', authRoutes);
+app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/teams', teamsRoutes);
 app.use('/api/matches', matchesRoutes);
 app.use('/api/leaderboard', leaderboardRoutes);
@@ -106,8 +130,15 @@ app.use(errorHandler);
 const gracefulShutdown = async (signal: string) => {
   logger.info(`Received ${signal}. Starting graceful shutdown...`);
 
-  server.close(() => {
+  io.close();
+  server.close(async () => {
     logger.info('HTTP server closed.');
+    try {
+      await client.end({ timeout: 5 });
+      logger.info('Database connections closed.');
+    } catch {
+      // pool already closed or unreachable — nothing left to release
+    }
     process.exit(0);
   });
 
@@ -122,13 +153,15 @@ const gracefulShutdown = async (signal: string) => {
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
-// Start server
-server.listen(PORT, HOST, () => {
-  logger.info(`🚀 Agent Arena Live Backend started!`);
-  logger.info(`📡 HTTP Server running on http://${HOST}:${PORT}`);
-  logger.info(`🔗 WebSocket Server running on ws://${HOST}:${PORT}${process.env.WS_PATH || '/socket.io'}`);
-  logger.info(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-});
+// Start server unless a test harness imports the app
+if (process.env.NODE_ENV !== 'test') {
+  server.listen(config.port, config.host, () => {
+    logger.info(`🚀 Agent Arena Live Backend started!`);
+    logger.info(`📡 HTTP Server running on http://${config.host}:${config.port}`);
+    logger.info(`🔗 WebSocket Server running on ws://${config.host}:${config.port}${config.wsPath}`);
+    logger.info(`🌍 Environment: ${config.nodeEnv}`);
+  });
+}
 
 // Export for testing
 export { app, server, io };

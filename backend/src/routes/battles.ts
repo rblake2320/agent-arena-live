@@ -12,7 +12,8 @@ import {
 } from '../db/index.js';
 import { asyncHandler, notFoundError, validationError, forbiddenError } from '../middleware/error.js';
 import { logger } from '../utils/logger.js';
-import { authenticateToken } from './auth.js';
+import { calculateElo, MatchOutcome } from '../utils/elo.js';
+import { authenticateToken } from '../middleware/auth.js';
 import { broadcastBattleEvent, broadcastMatchUpdate } from '../services/websocket.js';
 
 const router = Router();
@@ -256,7 +257,7 @@ router.post('/:matchId/score', authenticateToken, asyncHandler(async (req, res) 
   logger.info(`Round scored: Match ${matchId}, Round ${round}, Winner: ${winnerTeamId || 'Draw'}`);
 
   // Check if this was the final round
-  const isLastRound = round >= match[0].maxRounds;
+  const isLastRound = round >= (match[0].maxRounds ?? 1);
 
   if (isLastRound) {
     // Determine overall winner
@@ -343,19 +344,18 @@ router.get('/:matchId/events', asyncHandler(async (req, res) => {
     })
     .from(battleEvents)
     .leftJoin(agents, eq(battleEvents.agentId, agents.id))
-    .leftJoin(teams, eq(battleEvents.teamId, teams.id))
-    .where(eq(battleEvents.matchId, matchId));
+    .leftJoin(teams, eq(battleEvents.teamId, teams.id));
 
-  // Add filters
-  if (round !== undefined) {
-    query = query.where(and(eq(battleEvents.matchId, matchId), eq(battleEvents.round, round)));
+  // Collect filters into one where() — chained .where() calls replace each other
+  const conditions = [eq(battleEvents.matchId, matchId)];
+  if (round !== undefined && !isNaN(round)) {
+    conditions.push(eq(battleEvents.round, round));
   }
-
   if (eventType) {
-    query = query.where(and(eq(battleEvents.matchId, matchId), eq(battleEvents.eventType, eventType)));
+    conditions.push(eq(battleEvents.eventType, eventType));
   }
 
-  const events = await query.orderBy(battleEvents.timestamp);
+  const events = await query.where(and(...conditions)).orderBy(battleEvents.timestamp);
 
   res.json({
     matchId,
@@ -508,25 +508,15 @@ async function updateTeamRatings(matchId: number, winnerId: number | null) {
   const teamA = participants[0];
   const teamB = participants[1];
 
-  // Calculate expected scores
-  const expectedA = 1 / (1 + Math.pow(10, (teamB.currentRating - teamA.currentRating) / 400));
-  const expectedB = 1 / (1 + Math.pow(10, (teamA.currentRating - teamB.currentRating) / 400));
+  const outcome: MatchOutcome =
+    winnerId === teamA.teamId ? 'A' : winnerId === teamB.teamId ? 'B' : 'draw';
 
-  // Determine actual scores
-  let scoreA = 0.5; // Default to draw
-  let scoreB = 0.5;
-
-  if (winnerId === teamA.teamId) {
-    scoreA = 1;
-    scoreB = 0;
-  } else if (winnerId === teamB.teamId) {
-    scoreA = 0;
-    scoreB = 1;
-  }
-
-  // Calculate new ratings
-  const newRatingA = Math.round(teamA.currentRating + K_FACTOR * (scoreA - expectedA));
-  const newRatingB = Math.round(teamB.currentRating + K_FACTOR * (scoreB - expectedB));
+  const { newRatingA, newRatingB, scoreA, scoreB } = calculateElo(
+    teamA.currentRating,
+    teamB.currentRating,
+    outcome,
+    K_FACTOR
+  );
 
   // Update team A
   await db
@@ -543,7 +533,7 @@ async function updateTeamRatings(matchId: number, winnerId: number | null) {
         : sql`0`,
       longestWinStreak: scoreA === 1
         ? sql`greatest(${teams.longestWinStreak}, case when ${teams.currentStreak} >= 0 then ${teams.currentStreak} + 1 else 1 end)`
-        : teams.longestWinStreak,
+        : sql`${teams.longestWinStreak}`,
       updatedAt: new Date(),
     })
     .where(eq(teams.id, teamA.teamId));
@@ -563,7 +553,7 @@ async function updateTeamRatings(matchId: number, winnerId: number | null) {
         : sql`0`,
       longestWinStreak: scoreB === 1
         ? sql`greatest(${teams.longestWinStreak}, case when ${teams.currentStreak} >= 0 then ${teams.currentStreak} + 1 else 1 end)`
-        : teams.longestWinStreak,
+        : sql`${teams.longestWinStreak}`,
       updatedAt: new Date(),
     })
     .where(eq(teams.id, teamB.teamId));

@@ -1,0 +1,13 @@
+{
+  "version": "5",
+  "dialect": "pg",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1782974460560,
+      "tag": "0000_nifty_wolf_cub",
+      "breakpoints": true
+    }
+  ]
+}

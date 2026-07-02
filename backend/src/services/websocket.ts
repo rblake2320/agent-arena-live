@@ -3,6 +3,7 @@ import { logger } from '../utils/logger.js';
 import { db, liveViewers, matches } from '../db/index.js';
 import { eq, and } from 'drizzle-orm';
 import { v4 as uuidv4 } from 'uuid';
+import { verifySocketToken } from '../middleware/auth.js';
 
 interface ViewerData {
   sessionId: string;
@@ -115,16 +116,25 @@ export function setupWebSocket(ioInstance: Server) {
       }
     });
 
-    // Handle battle events (for moderators/admins)
+    // Handle battle events — only authenticated admins/moderators may broadcast.
+    // Clients pass their JWT via socket handshake: io(url, { auth: { token } })
     socket.on('battle_event', async (data: any) => {
       try {
-        // TODO: Add authentication/authorization
+        const token = socket.handshake.auth?.token as string | undefined;
+        const user = token ? verifySocketToken(token) : null;
+
+        if (!user || !['admin', 'moderator'].includes(user.role)) {
+          socket.emit('error', { message: 'Not authorized to broadcast battle events' });
+          logger.warn(`Unauthorized battle_event attempt from socket ${socket.id}`);
+          return;
+        }
+
         const { matchId, event } = data;
 
         // Broadcast to all viewers of this match
         socket.to(`match_${matchId}`).emit('battle_update', event);
 
-        logger.debug(`Battle event broadcasted for match ${matchId}:`, event);
+        logger.debug(`Battle event broadcasted for match ${matchId} by ${user.username}`);
 
       } catch (error) {
         logger.error('Error handling battle_event:', error);

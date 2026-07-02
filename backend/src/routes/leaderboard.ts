@@ -4,6 +4,7 @@ import { db, teams, ratingHistory, matches, matchParticipants } from '../db/inde
 import { asyncHandler, validationError } from '../middleware/error.js';
 import { logger } from '../utils/logger.js';
 import { broadcastLeaderboardUpdate } from '../services/websocket.js';
+import { authenticateToken, requireRole } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -139,18 +140,20 @@ router.get('/top', asyncHandler(async (req, res) => {
 
   // Format for frontend consumption
   const formattedTeams = topTeams.map(team => {
+    // row_number() comes back from postgres as a string — normalize it
+    const rank = Number(team.rank);
     const totalMatches = team.wins + team.losses;
     const winRate = totalMatches > 0 ? (team.wins / totalMatches) * 100 : 0;
 
     let badge = null;
-    if (team.rank === 1) badge = 'crown';
-    else if (team.rank <= 3) badge = 'medal';
+    if (rank === 1) badge = 'crown';
+    else if (rank <= 3) badge = 'medal';
 
     const streakSign = team.currentStreak >= 0 ? '+' : '';
     const streak = `${streakSign}${team.currentStreak}`;
 
     return {
-      rank: team.rank,
+      rank,
       name: team.name,
       owner: team.owner,
       rating: team.rating,
@@ -282,10 +285,8 @@ router.get('/stats', asyncHandler(async (req, res) => {
   });
 }));
 
-// Update leaderboard rankings (admin endpoint)
-router.post('/update-rankings', asyncHandler(async (req, res) => {
-  // TODO: Add admin authentication
-
+// Update leaderboard rankings (admin/moderator only)
+router.post('/update-rankings', authenticateToken, requireRole('admin', 'moderator'), asyncHandler(async (req, res) => {
   logger.info('Updating leaderboard rankings...');
 
   // Get all teams ordered by rating

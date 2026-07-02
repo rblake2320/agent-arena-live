@@ -1,10 +1,27 @@
 import { Router } from 'express';
 import { eq, desc, sql } from 'drizzle-orm';
 import { db, teams, teamAgents, agents, ratingHistory } from '../db/index.js';
-import { asyncHandler, notFoundError, validationError } from '../middleware/error.js';
+import { asyncHandler, notFoundError, validationError, forbiddenError } from '../middleware/error.js';
 import { logger } from '../utils/logger.js';
+import { authenticateToken, AuthenticatedRequest } from '../middleware/auth.js';
 
 const router = Router();
+
+// Owner or admin/moderator may modify a team
+async function assertCanManageTeam(teamId: number, user: { userId: number; role: string }) {
+  const team = await db.select().from(teams).where(eq(teams.id, teamId)).limit(1);
+
+  if (!team.length) {
+    throw notFoundError('Team');
+  }
+
+  const isPrivileged = ['admin', 'moderator'].includes(user.role);
+  if (!isPrivileged && team[0].ownerId !== user.userId) {
+    throw forbiddenError('You can only manage your own teams');
+  }
+
+  return team[0];
+}
 
 // Get all teams with pagination and filtering
 router.get('/', asyncHandler(async (req, res) => {
@@ -31,7 +48,7 @@ router.get('/', asyncHandler(async (req, res) => {
     isActive: teams.isActive,
     createdAt: teams.createdAt,
     updatedAt: teams.updatedAt,
-  }).from(teams);
+  }).from(teams).$dynamic();
 
   // Add search filter
   if (search) {
@@ -117,17 +134,14 @@ router.get('/:id', asyncHandler(async (req, res) => {
   });
 }));
 
-// Create new team
-router.post('/', asyncHandler(async (req, res) => {
-  const { name, owner, description, logo, agentIds } = req.body;
+// Create new team (authenticated — the caller becomes the owner)
+router.post('/', authenticateToken, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { name, description, logo, agentIds } = req.body;
+  const user = req.user!;
 
   // Validation
   if (!name || name.trim().length < 2) {
     throw validationError('Team name must be at least 2 characters long');
-  }
-
-  if (!owner || owner.trim().length < 2) {
-    throw validationError('Owner name must be at least 2 characters long');
   }
 
   if (agentIds && (!Array.isArray(agentIds) || agentIds.length === 0)) {
@@ -140,7 +154,8 @@ router.post('/', asyncHandler(async (req, res) => {
       .insert(teams)
       .values({
         name: name.trim(),
-        owner: owner.trim(),
+        owner: `@${user.username}`,
+        ownerId: user.userId,
         description: description?.trim(),
         logo,
         rating: 1200, // Starting ELO rating
@@ -178,8 +193,8 @@ router.post('/', asyncHandler(async (req, res) => {
   }
 }));
 
-// Update team
-router.put('/:id', asyncHandler(async (req, res) => {
+// Update team (owner or admin/moderator)
+router.put('/:id', authenticateToken, asyncHandler(async (req: AuthenticatedRequest, res) => {
   const teamId = parseInt(req.params.id);
   const { name, description, logo, isActive } = req.body;
 
@@ -187,16 +202,7 @@ router.put('/:id', asyncHandler(async (req, res) => {
     throw validationError('Invalid team ID');
   }
 
-  // Check if team exists
-  const existingTeam = await db
-    .select()
-    .from(teams)
-    .where(eq(teams.id, teamId))
-    .limit(1);
-
-  if (!existingTeam.length) {
-    throw notFoundError('Team');
-  }
+  await assertCanManageTeam(teamId, req.user!);
 
   // Update team
   const [updatedTeam] = await db
@@ -219,8 +225,8 @@ router.put('/:id', asyncHandler(async (req, res) => {
   });
 }));
 
-// Add agent to team
-router.post('/:id/agents', asyncHandler(async (req, res) => {
+// Add agent to team (owner or admin/moderator)
+router.post('/:id/agents', authenticateToken, asyncHandler(async (req: AuthenticatedRequest, res) => {
   const teamId = parseInt(req.params.id);
   const { agentId, role = 'member' } = req.body;
 
@@ -228,16 +234,7 @@ router.post('/:id/agents', asyncHandler(async (req, res) => {
     throw validationError('Invalid team or agent ID');
   }
 
-  // Check if team exists
-  const team = await db
-    .select()
-    .from(teams)
-    .where(eq(teams.id, teamId))
-    .limit(1);
-
-  if (!team.length) {
-    throw notFoundError('Team');
-  }
+  await assertCanManageTeam(teamId, req.user!);
 
   // Check if agent exists
   const agent = await db
@@ -268,14 +265,16 @@ router.post('/:id/agents', asyncHandler(async (req, res) => {
   }
 }));
 
-// Remove agent from team
-router.delete('/:id/agents/:agentId', asyncHandler(async (req, res) => {
+// Remove agent from team (owner or admin/moderator)
+router.delete('/:id/agents/:agentId', authenticateToken, asyncHandler(async (req: AuthenticatedRequest, res) => {
   const teamId = parseInt(req.params.id);
   const agentId = parseInt(req.params.agentId);
 
   if (isNaN(teamId) || isNaN(agentId)) {
     throw validationError('Invalid team or agent ID');
   }
+
+  await assertCanManageTeam(teamId, req.user!);
 
   const result = await db
     .delete(teamAgents)

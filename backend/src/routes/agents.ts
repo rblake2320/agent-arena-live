@@ -15,7 +15,7 @@ router.get('/', asyncHandler(async (req, res) => {
   const search = req.query.search as string;
   const isActive = req.query.isActive as string;
 
-  let query = db.select().from(agents);
+  let query = db.select().from(agents).$dynamic();
 
   // Apply filters
   const conditions = [];
@@ -42,7 +42,7 @@ router.get('/', asyncHandler(async (req, res) => {
     .offset(offset);
 
   // Get total count for pagination
-  let countQuery = db.select({ count: sql<number>`count(*)` }).from(agents);
+  let countQuery = db.select({ count: sql<number>`count(*)` }).from(agents).$dynamic();
   if (conditions.length > 0) {
     countQuery = countQuery.where(and(...conditions));
   }

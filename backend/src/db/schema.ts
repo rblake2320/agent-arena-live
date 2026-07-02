@@ -59,12 +59,12 @@ export const teams = pgTable('teams', {
   ownerId: integer('owner_id').references(() => users.id),
   description: text('description'),
   logo: text('logo'), // URL or base64
-  rating: integer('rating').default(1200), // ELO-style rating
-  wins: integer('wins').default(0),
-  losses: integer('losses').default(0),
-  draws: integer('draws').default(0),
-  currentStreak: integer('current_streak').default(0), // positive for win streak, negative for loss streak
-  longestWinStreak: integer('longest_win_streak').default(0),
+  rating: integer('rating').notNull().default(1200), // ELO-style rating
+  wins: integer('wins').notNull().default(0),
+  losses: integer('losses').notNull().default(0),
+  draws: integer('draws').notNull().default(0),
+  currentStreak: integer('current_streak').notNull().default(0), // positive for win streak, negative for loss streak
+  longestWinStreak: integer('longest_win_streak').notNull().default(0),
   rank: integer('rank'),
   isActive: boolean('is_active').default(true),
   createdAt: timestamp('created_at').defaultNow(),
@@ -79,8 +79,8 @@ export const teams = pgTable('teams', {
 // Team-Agent associations (many-to-many)
 export const teamAgents = pgTable('team_agents', {
   id: serial('id').primaryKey(),
-  teamId: integer('team_id').references(() => teams.id),
-  agentId: integer('agent_id').references(() => agents.id),
+  teamId: integer('team_id').notNull().references(() => teams.id),
+  agentId: integer('agent_id').notNull().references(() => agents.id),
   role: varchar('role', { length: 50 }).default('member'), // leader, member, backup
   addedAt: timestamp('added_at').defaultNow(),
 }, (table) => ({
@@ -95,7 +95,7 @@ export const matchTypes = pgTable('match_types', {
   name: varchar('name', { length: 100 }).notNull().unique(), // "Debate Battle", "Speed Trial", "Creative Challenge"
   description: text('description'),
   timeLimit: integer('time_limit'), // in seconds
-  maxRounds: integer('max_rounds').default(1),
+  maxRounds: integer('max_rounds').notNull().default(1),
   scoringCriteria: jsonb('scoring_criteria'), // JSON object defining how matches are scored
   isActive: boolean('is_active').default(true),
   createdAt: timestamp('created_at').defaultNow(),
@@ -107,14 +107,14 @@ export const matches = pgTable('matches', {
   uuid: uuid('uuid').defaultRandom().unique(),
   matchTypeId: integer('match_type_id').references(() => matchTypes.id),
   topic: text('topic').notNull(),
-  status: varchar('status', { length: 20 }).default('pending'), // pending, live, completed, cancelled
-  currentRound: integer('current_round').default(1),
-  maxRounds: integer('max_rounds').default(1),
+  status: varchar('status', { length: 20 }).notNull().default('pending'), // pending, live, completed, cancelled
+  currentRound: integer('current_round').notNull().default(1),
+  maxRounds: integer('max_rounds').notNull().default(1),
   startTime: timestamp('start_time'),
   endTime: timestamp('end_time'),
   winnerId: integer('winner_id').references(() => teams.id),
-  viewerCount: integer('viewer_count').default(0),
-  peakViewers: integer('peak_viewers').default(0),
+  viewerCount: integer('viewer_count').notNull().default(0),
+  peakViewers: integer('peak_viewers').notNull().default(0),
   metadata: jsonb('metadata'), // additional match-specific data
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
@@ -127,8 +127,8 @@ export const matches = pgTable('matches', {
 // Match participants (many-to-many between matches and teams)
 export const matchParticipants = pgTable('match_participants', {
   id: serial('id').primaryKey(),
-  matchId: integer('match_id').references(() => matches.id),
-  teamId: integer('team_id').references(() => teams.id),
+  matchId: integer('match_id').notNull().references(() => matches.id),
+  teamId: integer('team_id').notNull().references(() => teams.id),
   side: varchar('side', { length: 10 }).notNull(), // 'A' or 'B'
   score: decimal('score', { precision: 10, scale: 2 }).default('0'),
   isWinner: boolean('is_winner').default(false),
@@ -142,8 +142,9 @@ export const matchParticipants = pgTable('match_participants', {
 // Battle events/rounds within matches
 export const battleEvents = pgTable('battle_events', {
   id: serial('id').primaryKey(),
-  matchId: integer('match_id').references(() => matches.id),
+  matchId: integer('match_id').notNull().references(() => matches.id),
   round: integer('round').notNull(),
+  // nullable: system events (battle_start, battle_end) have no agent/team
   agentId: integer('agent_id').references(() => agents.id),
   teamId: integer('team_id').references(() => teams.id),
   eventType: varchar('event_type', { length: 50 }).notNull(), // 'response', 'action', 'score', 'timeout'
@@ -159,7 +160,7 @@ export const battleEvents = pgTable('battle_events', {
 // Live viewers tracking
 export const liveViewers = pgTable('live_viewers', {
   id: serial('id').primaryKey(),
-  matchId: integer('match_id').references(() => matches.id),
+  matchId: integer('match_id').notNull().references(() => matches.id),
   sessionId: varchar('session_id', { length: 100 }).notNull(),
   userId: integer('user_id').references(() => users.id), // nullable for anonymous viewers
   joinedAt: timestamp('joined_at').defaultNow(),
@@ -174,8 +175,8 @@ export const liveViewers = pgTable('live_viewers', {
 // Rating history for tracking team performance over time
 export const ratingHistory = pgTable('rating_history', {
   id: serial('id').primaryKey(),
-  teamId: integer('team_id').references(() => teams.id),
-  matchId: integer('match_id').references(() => matches.id),
+  teamId: integer('team_id').notNull().references(() => teams.id),
+  matchId: integer('match_id').notNull().references(() => matches.id),
   oldRating: integer('old_rating').notNull(),
   newRating: integer('new_rating').notNull(),
   ratingChange: integer('rating_change').notNull(),
