@@ -1,84 +1,37 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '../lib/supabase';
-import { getTeamLeaderboard } from '../lib/services/teams';
+import { getTopTeams } from '@/lib/services/teams';
+import { getSocket } from '@/lib/socket';
 
+/**
+ * Top teams from GET /api/leaderboard/top, refreshed whenever the server
+ * emits `leaderboard_update` over Socket.IO.
+ */
 export const useRealtimeLeaderboard = (limit = 10) => {
   const queryClient = useQueryClient();
-  const [isSubscribed, setIsSubscribed] = useState(false);
 
-  // Query for team leaderboard
-  const {
-    data: teams,
-    isLoading,
-    error,
-  } = useQuery({
-    queryKey: ['leaderboard', limit],
-    queryFn: () => getTeamLeaderboard(limit),
-    refetchInterval: 60000, // Fallback polling every minute
+  const query = useQuery({
+    queryKey: ['leaderboard', 'top', limit],
+    queryFn: () => getTopTeams(limit),
   });
 
   useEffect(() => {
-    if (isSubscribed) return;
+    const socket = getSocket();
+    const refresh = () =>
+      queryClient.invalidateQueries({ queryKey: ['leaderboard'] });
 
-    // Subscribe to team changes that affect leaderboard
-    const leaderboardChannel = supabase
-      .channel('leaderboard-updates')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'teams',
-        },
-        (payload) => {
-          console.log('Team update received:', payload);
-
-          // If rating, wins, losses, or rank changed, update leaderboard
-          const { old: oldTeam, new: newTeam } = payload;
-
-          if (
-            oldTeam?.rating !== newTeam?.rating ||
-            oldTeam?.wins !== newTeam?.wins ||
-            oldTeam?.losses !== newTeam?.losses ||
-            oldTeam?.rank !== newTeam?.rank
-          ) {
-            // Invalidate leaderboard queries
-            queryClient.invalidateQueries({ queryKey: ['leaderboard'] });
-          }
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'rating_history',
-        },
-        (payload) => {
-          console.log('Rating history update:', payload);
-
-          // When new rating history is added, refresh leaderboard
-          queryClient.invalidateQueries({ queryKey: ['leaderboard'] });
-        }
-      )
-      .subscribe((status) => {
-        console.log('Leaderboard subscription status:', status);
-        if (status === 'SUBSCRIBED') {
-          setIsSubscribed(true);
-        }
-      });
+    socket.on('leaderboard_update', refresh);
 
     return () => {
-      leaderboardChannel.unsubscribe();
-      setIsSubscribed(false);
+      socket.off('leaderboard_update', refresh);
     };
-  }, [queryClient, isSubscribed, limit]);
+  }, [queryClient]);
 
   return {
-    teams: teams || [],
-    isLoading,
-    error,
-    isSubscribed,
+    teams: query.data?.topTeams ?? [],
+    lastUpdated: query.data?.lastUpdated,
+    isLoading: query.isLoading,
+    error: (query.error as Error | null) ?? null,
+    refetch: query.refetch,
   };
 };

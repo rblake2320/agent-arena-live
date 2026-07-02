@@ -1,13 +1,24 @@
-import { useState, useEffect, createContext, useContext, ReactNode } from 'react';
-import { User, Session } from '@supabase/supabase-js';
-import { supabase } from '@/integrations/supabase/client';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
+} from 'react';
+import { ApiError, getJson, getToken, postJson, setToken } from '@/lib/api';
+import type { AuthResponse, User } from '@/lib/types/api';
 
 interface AuthContextType {
   user: User | null;
-  session: Session | null;
   loading: boolean;
-  signUp: (email: string, password: string, username?: string) => Promise<{ error: Error | null }>;
-  signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
+  signIn: (username: string, password: string) => Promise<User>;
+  signUp: (
+    username: string,
+    email: string,
+    password: string,
+    displayName?: string
+  ) => Promise<User>;
   signOut: () => Promise<void>;
 }
 
@@ -15,62 +26,75 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Set up auth state listener FIRST
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        setSession(session);
-        setUser(session?.user ?? null);
+    let cancelled = false;
+
+    const restoreSession = async () => {
+      if (!getToken()) {
         setLoading(false);
+        return;
       }
-    );
+      try {
+        const { user: me } = await getJson<{ user: User }>('/api/auth/me');
+        if (!cancelled) setUser(me);
+      } catch (error) {
+        if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+          setToken(null);
+        }
+        if (!cancelled) setUser(null);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
 
-    // THEN check for existing session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      setLoading(false);
-    });
-
-    return () => subscription.unsubscribe();
+    restoreSession();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const signUp = async (email: string, password: string, username?: string) => {
-    const redirectUrl = `${window.location.origin}/`;
-    
-    const { error } = await supabase.auth.signUp({
-      email,
+  const signIn = useCallback(async (username: string, password: string) => {
+    const res = await postJson<AuthResponse>('/api/auth/login', {
+      username,
       password,
-      options: {
-        emailRedirectTo: redirectUrl,
-        data: {
-          username: username || email.split('@')[0],
-          display_name: username || email.split('@')[0],
-        }
+    });
+    setToken(res.token);
+    setUser(res.user);
+    return res.user;
+  }, []);
+
+  const signUp = useCallback(
+    async (username: string, email: string, password: string, displayName?: string) => {
+      const res = await postJson<AuthResponse>('/api/auth/register', {
+        username,
+        email,
+        password,
+        ...(displayName ? { displayName } : {}),
+      });
+      setToken(res.token);
+      setUser(res.user);
+      return res.user;
+    },
+    []
+  );
+
+  const signOut = useCallback(async () => {
+    try {
+      if (getToken()) {
+        await postJson('/api/auth/logout');
       }
-    });
-    
-    return { error: error as Error | null };
-  };
-
-  const signIn = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-    
-    return { error: error as Error | null };
-  };
-
-  const signOut = async () => {
-    await supabase.auth.signOut();
-  };
+    } catch {
+      // Best-effort — always clear local session below.
+    } finally {
+      setToken(null);
+      setUser(null);
+    }
+  }, []);
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, signUp, signIn, signOut }}>
+    <AuthContext.Provider value={{ user, loading, signIn, signUp, signOut }}>
       {children}
     </AuthContext.Provider>
   );

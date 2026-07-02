@@ -1,14 +1,14 @@
-import { useState, useEffect } from 'react';
-import { useNavigate, useParams, Link } from 'react-router-dom';
+import { useState } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  ArrowLeft, 
-  Plus, 
-  X, 
-  Crown, 
-  Search, 
-  Brain, 
-  Shield, 
+import {
+  ArrowLeft,
+  Plus,
+  X,
+  Crown,
+  Search,
+  Brain,
+  Shield,
   Lightbulb,
   Pencil,
   Upload,
@@ -18,10 +18,11 @@ import {
   Loader2,
   LogIn
 } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { 
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -37,8 +38,9 @@ import {
 } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
-import { useTeams, TeamMember } from '@/hooks/useTeams';
-import { useAgents, Agent } from '@/hooks/useAgents';
+import { useAgents, type Agent } from '@/hooks/useAgents';
+import { addAgentToTeam, createTeam } from '@/lib/services/teams';
+import { ApiError } from '@/lib/api';
 
 const roles = [
   { id: 'lead', label: 'Lead', icon: Crown, color: 'text-yellow-400', description: 'Primary strategist and decision maker' },
@@ -49,22 +51,19 @@ const roles = [
 ];
 
 interface LocalTeamAgent {
-  id: string;
-  agentId: string;
+  agentId: number;
   name: string;
   provider: string;
-  role: TeamMember['role'];
+  role: string;
   capabilities: string[];
-  position: number;
 }
 
 export default function TeamBuilder() {
-  const { teamId } = useParams();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const { user, loading: authLoading } = useAuth();
-  const { teams, loading: teamsLoading, createTeam, updateTeam, addAgentToTeam, removeAgentFromTeam, updateTeamMember } = useTeams();
-  const { allAvailableAgents, loading: agentsLoading } = useAgents();
+  const { agents: availableAgents, loading: agentsLoading } = useAgents();
 
   const [teamName, setTeamName] = useState('');
   const [teamDescription, setTeamDescription] = useState('');
@@ -72,33 +71,8 @@ export default function TeamBuilder() {
   const [agentDialogOpen, setAgentDialogOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [saving, setSaving] = useState(false);
-  const [currentTeamId, setCurrentTeamId] = useState<string | null>(null);
 
-  // Load existing team if editing
-  useEffect(() => {
-    if (teamId && teams.length > 0) {
-      const existingTeam = teams.find(t => t.id === teamId);
-      if (existingTeam) {
-        setCurrentTeamId(existingTeam.id);
-        setTeamName(existingTeam.name);
-        setTeamDescription(existingTeam.description || '');
-        
-        // Load team members
-        const members = existingTeam.members || [];
-        setTeamAgents(members.map(m => ({
-          id: m.id,
-          agentId: m.agent_id,
-          name: m.agent?.name || 'Unknown Agent',
-          provider: m.agent?.provider || 'Unknown',
-          role: m.role,
-          capabilities: m.agent?.capabilities || [],
-          position: m.position,
-        })));
-      }
-    }
-  }, [teamId, teams]);
-
-  const filteredAgents = allAvailableAgents.filter(agent => 
+  const filteredAgents = availableAgents.filter(agent =>
     agent.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     agent.provider.toLowerCase().includes(searchQuery.toLowerCase())
   );
@@ -106,29 +80,27 @@ export default function TeamBuilder() {
   const addAgent = (agent: Agent) => {
     if (teamAgents.length >= 5) return;
     if (teamAgents.find(a => a.agentId === agent.id)) return;
-    
+
     const newAgent: LocalTeamAgent = {
-      id: `temp-${Date.now()}`,
       agentId: agent.id,
       name: agent.name,
       provider: agent.provider,
       role: 'researcher',
-      capabilities: agent.capabilities,
-      position: teamAgents.length,
+      capabilities: agent.capabilities ?? [],
     };
-    
+
     setTeamAgents([...teamAgents, newAgent]);
     setAgentDialogOpen(false);
     setSearchQuery('');
   };
 
-  const removeAgent = (agentId: string) => {
+  const removeAgent = (agentId: number) => {
     setTeamAgents(teamAgents.filter(a => a.agentId !== agentId));
   };
 
-  const updateAgentRole = (agentId: string, role: string) => {
-    setTeamAgents(teamAgents.map(a => 
-      a.agentId === agentId ? { ...a, role: role as TeamMember['role'] } : a
+  const updateAgentRole = (agentId: number, role: string) => {
+    setTeamAgents(teamAgents.map(a =>
+      a.agentId === agentId ? { ...a, role } : a
     ));
   };
 
@@ -154,70 +126,27 @@ export default function TeamBuilder() {
     setSaving(true);
 
     try {
-      let savedTeamId = currentTeamId;
+      const { team } = await createTeam({
+        name: teamName.trim(),
+        description: teamDescription.trim() || undefined,
+      });
 
-      // Create or update team
-      if (!savedTeamId) {
-        const newTeam = await createTeam(teamName.trim(), teamDescription.trim() || undefined);
-        if (!newTeam) {
-          setSaving(false);
-          return;
-        }
-        savedTeamId = newTeam.id;
-        setCurrentTeamId(savedTeamId);
-      } else {
-        const updated = await updateTeam(savedTeamId, {
-          name: teamName.trim(),
-          description: teamDescription.trim() || undefined,
-        });
-        if (!updated) {
-          setSaving(false);
-          return;
-        }
-      }
-
-      // Get existing team to compare members
-      const existingTeam = teams.find(t => t.id === savedTeamId);
-      const existingMembers = existingTeam?.members || [];
-
-      // Remove agents that are no longer in the team
-      for (const member of existingMembers) {
-        if (!teamAgents.find(a => a.agentId === member.agent_id)) {
-          await removeAgentFromTeam(savedTeamId, member.agent_id);
-        }
-      }
-
-      // Add or update agents
       for (const agent of teamAgents) {
-        const existing = existingMembers.find(m => m.agent_id === agent.agentId);
-        if (existing) {
-          // Update if role or position changed
-          if (existing.role !== agent.role || existing.position !== agent.position) {
-            await updateTeamMember(savedTeamId, agent.agentId, {
-              role: agent.role,
-              position: agent.position,
-            });
-          }
-        } else {
-          // Add new member
-          await addAgentToTeam(savedTeamId, agent.agentId, agent.role, agent.position);
-        }
+        await addAgentToTeam(team.id, agent.agentId, agent.role);
       }
+
+      queryClient.invalidateQueries({ queryKey: ['teams'] });
 
       toast({
         title: "Team saved!",
-        description: "Your team has been saved successfully.",
+        description: "Your team has been created successfully.",
       });
-
-      // Navigate to the team's URL if this was a new team
-      if (!teamId && savedTeamId) {
-        navigate(`/team-builder/${savedTeamId}`, { replace: true });
-      }
+      navigate('/');
     } catch (error) {
       console.error('Error saving team:', error);
       toast({
         title: "Error saving team",
-        description: "Something went wrong. Please try again.",
+        description: error instanceof ApiError ? error.message : "Something went wrong. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -226,7 +155,7 @@ export default function TeamBuilder() {
   };
 
   // Loading state
-  if (authLoading || teamsLoading || agentsLoading) {
+  if (authLoading || agentsLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-neon-cyan" />
@@ -240,7 +169,7 @@ export default function TeamBuilder() {
       <div className="min-h-screen bg-background">
         <div className="fixed inset-0 bg-grid-pattern opacity-5 pointer-events-none" />
         <div className="fixed inset-0 bg-gradient-to-br from-neon-cyan/5 via-transparent to-neon-purple/5 pointer-events-none" />
-        
+
         <div className="container px-4 py-16 flex flex-col items-center justify-center min-h-screen">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -277,7 +206,7 @@ export default function TeamBuilder() {
       {/* Background effects */}
       <div className="fixed inset-0 bg-grid-pattern opacity-5 pointer-events-none" />
       <div className="fixed inset-0 bg-gradient-to-br from-neon-cyan/5 via-transparent to-neon-purple/5 pointer-events-none" />
-      
+
       {/* Header */}
       <header className="sticky top-0 z-50 bg-background/80 backdrop-blur-xl border-b border-border/50">
         <div className="container px-4 h-16 flex items-center justify-between">
@@ -287,14 +216,12 @@ export default function TeamBuilder() {
             </Link>
             <div className="flex items-center gap-2">
               <Users className="w-5 h-5 text-neon-cyan" />
-              <h1 className="font-display font-bold text-lg">
-                {currentTeamId ? 'Edit Team' : 'Create Team'}
-              </h1>
+              <h1 className="font-display font-bold text-lg">Create Team</h1>
             </div>
           </div>
-          <Button 
-            variant="arena" 
-            size="sm" 
+          <Button
+            variant="arena"
+            size="sm"
             className="gap-2"
             onClick={handleSave}
             disabled={saving}
@@ -312,14 +239,14 @@ export default function TeamBuilder() {
       <main className="container px-4 py-8 max-w-6xl">
         <div className="grid lg:grid-cols-5 gap-8">
           {/* Team Profile Section */}
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
             className="lg:col-span-2 space-y-6"
           >
             <div className="arena-card p-6">
               <h2 className="font-display font-semibold text-lg mb-4">Team Profile</h2>
-              
+
               {/* Avatar Upload */}
               <div className="flex flex-col items-center mb-6">
                 <div className="relative group">
@@ -374,21 +301,18 @@ export default function TeamBuilder() {
             </div>
 
             {/* No agents message */}
-            {allAvailableAgents.length === 0 && (
+            {availableAgents.length === 0 && (
               <div className="arena-card p-6 text-center">
                 <Zap className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
-                <p className="text-sm text-muted-foreground mb-3">
-                  No agents available yet. Register your first agent to add it to your team.
+                <p className="text-sm text-muted-foreground">
+                  No agents available yet — check back soon.
                 </p>
-                <Button variant="outline" size="sm" asChild>
-                  <Link to="/register-agent">Register Agent</Link>
-                </Button>
               </div>
             )}
           </motion.div>
 
           {/* Agent Slots Section */}
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             className="lg:col-span-3"
@@ -399,10 +323,10 @@ export default function TeamBuilder() {
               </h2>
               <Dialog open={agentDialogOpen} onOpenChange={setAgentDialogOpen}>
                 <DialogTrigger asChild>
-                  <Button 
-                    variant="neon" 
-                    size="sm" 
-                    disabled={teamAgents.length >= 5 || allAvailableAgents.length === 0}
+                  <Button
+                    variant="neon"
+                    size="sm"
+                    disabled={teamAgents.length >= 5 || availableAgents.length === 0}
                     className="gap-2"
                   >
                     <Plus className="w-4 h-4" />
@@ -423,7 +347,7 @@ export default function TeamBuilder() {
                     <div className="max-h-64 overflow-y-auto space-y-2">
                       {filteredAgents.length === 0 ? (
                         <p className="text-sm text-muted-foreground text-center py-4">
-                          No agents found. Register some agents first.
+                          No agents found.
                         </p>
                       ) : (
                         filteredAgents.map(agent => {
@@ -440,7 +364,7 @@ export default function TeamBuilder() {
                                 <div className="text-sm text-muted-foreground">{agent.provider}</div>
                               </div>
                               <div className="flex gap-1">
-                                {agent.capabilities.slice(0, 2).map(cap => (
+                                {(agent.capabilities ?? []).slice(0, 2).map(cap => (
                                   <span key={cap} className="text-xs px-2 py-0.5 bg-neon-cyan/10 text-neon-cyan rounded">
                                     {cap}
                                   </span>
@@ -459,7 +383,7 @@ export default function TeamBuilder() {
             {/* Agent Slots Grid */}
             <div className="grid gap-4">
               <AnimatePresence mode="popLayout">
-                {teamAgents.map((agent, index) => {
+                {teamAgents.map((agent) => {
                   const roleInfo = getRoleInfo(agent.role);
                   const RoleIcon = roleInfo.icon;
                   return (
@@ -485,7 +409,7 @@ export default function TeamBuilder() {
                               {agent.provider}
                             </span>
                           </div>
-                          
+
                           {/* Role Selector */}
                           <div className="flex items-center gap-3">
                             <Select
@@ -539,7 +463,7 @@ export default function TeamBuilder() {
                   animate={{ opacity: 1 }}
                   transition={{ delay: index * 0.05 }}
                   className="border-2 border-dashed border-border/50 rounded-xl p-6 flex items-center justify-center hover:border-neon-cyan/30 transition-colors cursor-pointer"
-                  onClick={() => allAvailableAgents.length > 0 && setAgentDialogOpen(true)}
+                  onClick={() => availableAgents.length > 0 && setAgentDialogOpen(true)}
                 >
                   <div className="text-center text-muted-foreground">
                     <Plus className="w-8 h-8 mx-auto mb-2 opacity-50" />

@@ -41,18 +41,17 @@ export const Navbar = () => {
           {/* Desktop Nav */}
           <div className="hidden md:flex items-center gap-1">
             {navItems.map((item) => {
-              const isExternal = item.href.startsWith('#');
-              const Component = isExternal ? 'a' : Link;
-              const linkProps = isExternal ? { href: item.href } : { to: item.href };
-              return (
-                <Component
-                  key={item.label}
-                  {...linkProps as any}
-                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors rounded-lg hover:bg-muted/50"
-                >
+              const className = "flex items-center gap-2 px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors rounded-lg hover:bg-muted/50";
+              return item.href.startsWith('#') ? (
+                <a key={item.label} href={item.href} className={className}>
                   <item.icon className="w-4 h-4" />
                   {item.label}
-                </Component>
+                </a>
+              ) : (
+                <Link key={item.label} to={item.href} className={className}>
+                  <item.icon className="w-4 h-4" />
+                  {item.label}
+                </Link>
               );
             })}
           </div>
@@ -64,7 +63,7 @@ export const Navbar = () => {
             ) : user ? (
               <>
                 <span className="text-sm text-muted-foreground">
-                  {user.email?.split('@')[0]}
+                  {user.displayName || user.username}
                 </span>
                 <Button variant="ghost" size="sm" onClick={handleSignOut}>
                   <LogOut className="w-4 h-4 mr-2" />
@@ -104,26 +103,34 @@ export const Navbar = () => {
           >
             <div className="container px-4 py-4 space-y-2">
               {navItems.map((item) => {
-                const isExternal = item.href.startsWith('#');
-                const Component = isExternal ? 'a' : Link;
-                const linkProps = isExternal ? { href: item.href } : { to: item.href };
-                return (
-                  <Component
+                const className = "flex items-center gap-3 px-4 py-3 text-foreground hover:bg-muted/50 rounded-lg transition-colors";
+                return item.href.startsWith('#') ? (
+                  <a
                     key={item.label}
-                    {...linkProps as any}
-                    className="flex items-center gap-3 px-4 py-3 text-foreground hover:bg-muted/50 rounded-lg transition-colors"
+                    href={item.href}
+                    className={className}
                     onClick={() => setIsOpen(false)}
                   >
                     <item.icon className="w-5 h-5 text-neon-cyan" />
                     {item.label}
-                  </Component>
+                  </a>
+                ) : (
+                  <Link
+                    key={item.label}
+                    to={item.href}
+                    className={className}
+                    onClick={() => setIsOpen(false)}
+                  >
+                    <item.icon className="w-5 h-5 text-neon-cyan" />
+                    {item.label}
+                  </Link>
                 );
               })}
               <div className="pt-4 border-t border-border/50 space-y-2">
                 {user ? (
                   <>
                     <div className="px-4 py-2 text-sm text-muted-foreground">
-                      Signed in as {user.email?.split('@')[0]}
+                      Signed in as {user.displayName || user.username}
                     </div>
                     <Button variant="ghost" className="w-full justify-center" onClick={handleSignOut}>
                       <LogOut className="w-4 h-4 mr-2" />

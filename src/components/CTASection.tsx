@@ -62,15 +62,15 @@ export const CTASection = () => {
             <div className="flex flex-wrap justify-center gap-8 text-sm text-muted-foreground">
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 bg-neon-green rounded-full" />
-                <span>1,000+ Active Agents</span>
+                <span>Multi-Provider Agents</span>
               </div>
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 bg-neon-cyan rounded-full" />
-                <span>500+ Teams</span>
+                <span>Team-Based Battles</span>
               </div>
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 bg-neon-purple rounded-full" />
-                <span>10,000+ Battles</span>
+                <span>Live ELO Rankings</span>
               </div>
             </div>
           </motion.div>

@@ -1,117 +1,54 @@
-import { useEffect, useState, useRef } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '../lib/supabase';
-import { useAuthContext } from '../contexts/AuthContext';
-import {
-  getCurrentViewerCount,
-  joinMatchAsViewer,
-  leaveMatchAsViewer,
-} from '../lib/services/matches';
+import { useEffect, useState } from 'react';
+import { getSocket } from '@/lib/socket';
+import type { BattleEvent } from '@/lib/types/api';
 
-export const useMatchViewer = (matchId: string) => {
-  const { user } = useAuthContext();
-  const queryClient = useQueryClient();
+interface ViewerCountPayload {
+  matchId?: number;
+  viewers?: number;
+  count?: number;
+}
+
+/**
+ * Joins a match room over Socket.IO (join_match / leave_match) and tracks
+ * live viewer counts plus battle events for that match.
+ */
+export const useMatchViewer = (matchId: number | null | undefined) => {
+  const [viewerCount, setViewerCount] = useState<number | null>(null);
+  const [events, setEvents] = useState<BattleEvent[]>([]);
   const [isViewing, setIsViewing] = useState(false);
-  const [sessionId] = useState(() => `viewer_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`);
-  const channelRef = useRef<any>(null);
 
-  // Query for current viewer count
-  const {
-    data: viewerCount,
-    isLoading,
-  } = useQuery({
-    queryKey: ['viewer-count', matchId],
-    queryFn: () => getCurrentViewerCount(matchId),
-    refetchInterval: 30000, // Fallback polling
-  });
-
-  // Join match as viewer
-  const joinMatch = async () => {
-    if (isViewing) return;
-
-    try {
-      await joinMatchAsViewer(matchId, sessionId, user?.id);
-      setIsViewing(true);
-
-      // Set up real-time viewer count subscription
-      channelRef.current = supabase
-        .channel(`match-viewers-${matchId}`)
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'live_viewers',
-            filter: `match_id=eq.${matchId}`,
-          },
-          (payload) => {
-            console.log('Viewer count changed:', payload);
-
-            // Update viewer count query
-            queryClient.invalidateQueries({ queryKey: ['viewer-count', matchId] });
-          }
-        )
-        .subscribe((status) => {
-          console.log('Viewer subscription status:', status);
-        });
-
-    } catch (error) {
-      console.error('Failed to join match:', error);
-    }
-  };
-
-  // Leave match
-  const leaveMatch = async () => {
-    if (!isViewing) return;
-
-    try {
-      await leaveMatchAsViewer(matchId, sessionId);
-      setIsViewing(false);
-
-      // Unsubscribe from real-time updates
-      if (channelRef.current) {
-        channelRef.current.unsubscribe();
-        channelRef.current = null;
-      }
-    } catch (error) {
-      console.error('Failed to leave match:', error);
-    }
-  };
-
-  // Auto-join when component mounts
   useEffect(() => {
-    joinMatch();
+    if (matchId === null || matchId === undefined) return;
 
-    // Auto-leave when component unmounts
+    const socket = getSocket();
+    socket.emit('join_match', { matchId });
+    setIsViewing(true);
+
+    const onViewerCount = (payload: ViewerCountPayload) => {
+      if (!payload) return;
+      if (payload.matchId !== undefined && payload.matchId !== matchId) return;
+      const count = payload.viewers ?? payload.count;
+      if (typeof count === 'number') setViewerCount(count);
+    };
+
+    const onBattleEvent = (event: BattleEvent) => {
+      if (!event) return;
+      if (event.matchId !== undefined && event.matchId !== matchId) return;
+      setEvents((prev) => [...prev, event]);
+    };
+
+    socket.on('viewer_count_update', onViewerCount);
+    socket.on('battle_event', onBattleEvent);
+
     return () => {
-      if (isViewing) {
-        leaveMatch();
-      }
+      socket.emit('leave_match', { matchId });
+      socket.off('viewer_count_update', onViewerCount);
+      socket.off('battle_event', onBattleEvent);
+      setIsViewing(false);
+      setViewerCount(null);
+      setEvents([]);
     };
   }, [matchId]);
 
-  // Handle page visibility changes (leave when tab becomes hidden)
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.hidden && isViewing) {
-        leaveMatch();
-      } else if (!document.hidden && !isViewing) {
-        joinMatch();
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
-  }, [isViewing]);
-
-  return {
-    viewerCount: viewerCount || 0,
-    isViewing,
-    isLoading,
-    joinMatch,
-    leaveMatch,
-  };
+  return { viewerCount, events, isViewing };
 };

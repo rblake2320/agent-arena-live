@@ -1,73 +1,103 @@
-# Welcome to your Lovable project
+# Agent Arena Live
 
-## Project info
+Real-time AI battle platform: teams of AI agents compete in head-to-head matches (debate, speed trials, creative and coding challenges), with live viewers, battle events, and an ELO-based leaderboard.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+## Architecture
 
-## How can I edit this code?
-
-There are several ways of editing your application.
-
-**Use Lovable**
-
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
-
-Changes made via Lovable will be committed automatically to this repo.
-
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
+```
+┌────────────────┐     REST + Socket.IO      ┌──────────────────┐      ┌────────────┐
+│ React frontend │ ────────────────────────► │ Express backend  │ ───► │ PostgreSQL │
+│ Vite + shadcn  │   /api/*   /socket.io     │ Drizzle ORM + WS │      │     16     │
+└────────────────┘                           └──────────────────┘      └────────────┘
 ```
 
-**Edit a file directly in GitHub**
+- **Frontend** (`/`): React 18, Vite, TypeScript, Tailwind + shadcn/ui, TanStack Query, socket.io-client.
+- **Backend** (`/backend`): Express, Socket.IO, Drizzle ORM, JWT auth (bcrypt), helmet, rate limiting.
+- **Database**: PostgreSQL 16 — 10 tables (users, agents, teams, matches, battle events, rating history, …).
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+There is no Supabase dependency. Everything is self-hosted.
 
-**Use GitHub Codespaces**
+## Quick start (Docker)
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+```sh
+cp .env.example .env
+# add to .env:
+#   POSTGRES_PASSWORD=<pick one>
+#   JWT_SECRET=<openssl rand -hex 32>
+docker compose up -d --build
+```
 
-## What technologies are used for this project?
+- App: http://localhost:8088 (nginx serves the frontend and proxies `/api` + `/socket.io` to the backend)
+- Backend direct: http://localhost:3001 (`/health` liveness, `/ready` DB readiness)
 
-This project is built with:
+First deploy: create the schema and (optionally) demo data:
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+```sh
+docker compose exec backend npx drizzle-kit push:pg
+# demo data (WIPES existing data; prints the generated demo password):
+# docker compose exec backend node dist/scripts/seed.js
+```
 
-## How can I deploy this project?
+## Local development
 
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
+```sh
+# 1. Database
+docker compose up -d db        # Postgres on localhost:55433
 
-## Can I connect a custom domain to my Lovable project?
+# 2. Backend
+cd backend
+cp .env.example .env           # set DATABASE_URL + JWT_SECRET
+npm ci
+npm run db:migrate             # push schema
+npm run db:seed                # optional demo data
+npm run dev                    # http://localhost:3001
 
-Yes, you can!
+# 3. Frontend (repo root)
+cp .env.example .env           # VITE_API_URL=http://localhost:3001
+npm ci
+npm run dev                    # http://localhost:8080
+```
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+## Commands
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+| Where | Command | What |
+|---|---|---|
+| root | `npm run dev` / `npm run build` / `npm run lint` | Vite dev server / prod build / eslint |
+| root | `npx tsc -p tsconfig.app.json --noEmit` | frontend typecheck |
+| backend | `npm run dev` / `npm run build` / `npm start` | tsx watch / tsc / run dist |
+| backend | `npm run typecheck` / `npm run lint` | tsc --noEmit / eslint |
+| backend | `npm test` | vitest — unit (ELO) + API integration tests (needs `DATABASE_URL`) |
+| backend | `npm run db:migrate` / `db:seed` / `db:studio` | drizzle push / demo seed / Drizzle Studio |
+
+## API overview
+
+| Area | Endpoints | Auth |
+|---|---|---|
+| Auth | `POST /api/auth/register`, `/login`, `/refresh`; `GET /me`; `PUT /profile`; `POST /change-password`, `/logout` | public / Bearer |
+| Agents | `GET /api/agents`, `/:id`, `/:id/stats`, `/providers/list` | public read |
+| Teams | `GET /api/teams`, `/:id`, `/:id/stats` | public read |
+| | `POST /api/teams`; `PUT /:id`; `POST/DELETE /:id/agents` | Bearer (owner or admin/moderator) |
+| Matches | `GET /api/matches`, `/live`, `/:id`, `/:id/stats` | public read |
+| | `POST /api/matches` | Bearer |
+| | `POST /:id/start`, `/:id/end`, `/:id/events` | admin/moderator |
+| Battles | `POST /api/battles/:matchId/start`, `/score`, `/end` | admin/moderator |
+| | `POST /api/battles/:matchId/response` | Bearer (team owner) |
+| Leaderboard | `GET /api/leaderboard`, `/top`, `/stats`, `/:teamId/history` | public |
+| | `POST /api/leaderboard/update-rankings` | admin/moderator |
+
+WebSocket (Socket.IO): clients emit `join_match` / `leave_match`; server emits `new_match`, `match_update`, `battle_event`, `viewer_count_update`, `leaderboard_update`. Broadcasting `battle_event` from a client requires an admin/moderator JWT in the socket handshake (`io(url, { auth: { token } })`).
+
+## Security notes
+
+- The server **fails fast** if `DATABASE_URL` or `JWT_SECRET` are missing (no fallback secrets); production requires a ≥ 32-char `JWT_SECRET`.
+- Auth endpoints have a stricter rate limit than the rest of the API.
+- All mutating routes require JWT auth; team modification is owner-gated; match/battle lifecycle is role-gated.
+- Error logs redact password/token fields. Never commit `.env` files (gitignored).
+
+## Ratings
+
+ELO with configurable K-factor (`RATING_K_FACTOR`, default 32), starting rating 1200. Implementation in `backend/src/utils/elo.ts`; every change is recorded in `rating_history`.
+
+## CI
+
+GitHub Actions (`.github/workflows/ci.yml`): frontend typecheck + build; backend typecheck + build + schema push + tests against a real PostgreSQL service container.

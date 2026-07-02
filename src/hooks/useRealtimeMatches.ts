@@ -1,99 +1,41 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '../lib/supabase';
-import { getLiveMatches } from '../lib/services/matches';
-import { LiveMatchData } from '../lib/types/database';
+import { getLiveMatches } from '@/lib/services/matches';
+import { getSocket } from '@/lib/socket';
 
+const LIVE_MATCHES_KEY = ['matches', 'live'] as const;
+
+/**
+ * Live matches from GET /api/matches/live, refreshed whenever the server
+ * emits `new_match` or `match_update` over Socket.IO.
+ */
 export const useRealtimeMatches = () => {
   const queryClient = useQueryClient();
-  const [isSubscribed, setIsSubscribed] = useState(false);
 
-  // Query for live matches
-  const {
-    data: matches,
-    isLoading,
-    error,
-  } = useQuery({
-    queryKey: ['live-matches'],
+  const query = useQuery({
+    queryKey: LIVE_MATCHES_KEY,
     queryFn: getLiveMatches,
-    refetchInterval: 30000, // Fallback polling every 30 seconds
+    refetchInterval: 60_000,
   });
 
   useEffect(() => {
-    if (isSubscribed) return;
+    const socket = getSocket();
+    const refresh = () =>
+      queryClient.invalidateQueries({ queryKey: LIVE_MATCHES_KEY });
 
-    // Subscribe to match changes
-    const matchChannel = supabase
-      .channel('live-matches')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'matches',
-          filter: 'status=eq.live',
-        },
-        (payload) => {
-          console.log('Match update received:', payload);
-
-          // Invalidate and refetch matches
-          queryClient.invalidateQueries({ queryKey: ['live-matches'] });
-
-          // You could also optimistically update here
-          // queryClient.setQueryData(['live-matches'], (old) => {
-          //   // Update logic here
-          // });
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'live_viewers',
-        },
-        (payload) => {
-          console.log('Viewer update received:', payload);
-
-          // Update viewer counts for specific matches
-          queryClient.invalidateQueries({ queryKey: ['live-matches'] });
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'battle_events',
-        },
-        (payload) => {
-          console.log('New battle event:', payload);
-
-          // Invalidate match-specific queries
-          const matchId = payload.new?.match_id;
-          if (matchId) {
-            queryClient.invalidateQueries({ queryKey: ['match', matchId] });
-            queryClient.invalidateQueries({ queryKey: ['match-events', matchId] });
-          }
-        }
-      )
-      .subscribe((status) => {
-        console.log('Match subscription status:', status);
-        if (status === 'SUBSCRIBED') {
-          setIsSubscribed(true);
-        }
-      });
+    socket.on('new_match', refresh);
+    socket.on('match_update', refresh);
 
     return () => {
-      matchChannel.unsubscribe();
-      setIsSubscribed(false);
+      socket.off('new_match', refresh);
+      socket.off('match_update', refresh);
     };
-  }, [queryClient, isSubscribed]);
+  }, [queryClient]);
 
   return {
-    matches: matches || [],
-    isLoading,
-    error,
-    isSubscribed,
+    matches: query.data?.matches ?? [],
+    isLoading: query.isLoading,
+    error: (query.error as Error | null) ?? null,
+    refetch: query.refetch,
   };
 };
